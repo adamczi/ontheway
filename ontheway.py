@@ -3,7 +3,9 @@
 /***************************************************************************
  ontheway
                                  A QGIS plugin
- Calculate route
+ Calculate route and return surroundings of this route in a given time 
+ or distance range.
+ 
                               -------------------
         begin                : 2016-08-18
         git sha              : $Format:%H$
