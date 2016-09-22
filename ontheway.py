@@ -23,7 +23,7 @@
  ***************************************************************************/
 """
 from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QVariant
-from PyQt4.QtGui import QAction, QIcon
+from PyQt4.QtGui import QAction, QIcon, QToolBar
 # Initialize Qt resources from file resources.py
 import resources
 # Import the code for the dialog
@@ -53,8 +53,11 @@ class ontheway:
 
         ## To get EPSG from canvas
         canvas = self.iface.mapCanvas() 
-        self.currentEPSG = canvas.mapRenderer().destinationCrs().authid()
-
+        
+        try:
+            self.currentEPSG = canvas.mapSettings().destinationCrs().authid()
+        except:
+            self.currentEPSG = canvas.mapRenderer().destinationCrs().authid()
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
         # initialize locale
@@ -76,10 +79,15 @@ class ontheway:
 
         # Declare instance attributes
         self.actions = []
-        self.menu = self.tr(u'&onTheWay')
-        # TODO: We are going to let the user set this up in a future iteration
-        self.toolbar = self.iface.addToolBar(u'ontheway')
-        self.toolbar.setObjectName(u'ontheway')
+        self.menu = self.tr(u'&Location Intelligence')
+        
+        ## Add to LI tooblar or create if doesn't exist
+        toolbarName = 'Location Intelligence'
+        self.toolbar = self.iface.mainWindow().findChild(QToolBar,toolbarName)
+        print self.toolbar
+        if self.toolbar is None:
+            self.toolbar = self.iface.addToolBar(toolbarName)
+            self.toolbar.setObjectName(u'ontheway')
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -194,10 +202,11 @@ class ontheway:
     def zipToCoords(self, code):
         """ Get centroid of postal code and return it's coordinates """
         ## Get original geometry
-        queryString = 'http://127.0.0.1:5000/%s' % code
-        response = urllib.urlopen(queryString)
-        data = json.loads(response.read())
-        if data != code: ## if code exists in database
+        try:
+            queryString = 'http://zip.gis-support.pl/%s' % code
+            response = urllib.urlopen(queryString)
+            data = json.loads(response.read())
+        
             count = 0
             ## Create dict of geometry of postal code area...
             tempPolygons = []
@@ -208,17 +217,18 @@ class ontheway:
             ## ... and store it in MultiPolygon geometry
             geom = QgsGeometry.fromMultiPolygon(tempPolygons).centroid()     
 
-            ## Transform CRS to 4326 desired by Skobbler
-            crsSrc = QgsCoordinateReferenceSystem(2180) ## database CRS
-            crsDest = QgsCoordinateReferenceSystem(4326) ## WGS-84
-            xform = QgsCoordinateTransform(crsSrc, crsDest)
-            geom.transform(xform)
             return str(geom.asPoint().y())+','+str(geom.asPoint().x())
-        else:    
-            return 'keyerror'
+        except ValueError:    
+            self.error = 404
+            return
 
     def requestRoute(self):
         """ Send the Route request """
+
+        self.highways = '1' if self.dlg.checkBox_1.checkState() else '0'
+        self.toll = '1' if self.dlg.checkBox_2.checkState() else '0'
+        self.error = 0
+
         ## Get the data
         response = urllib.urlopen(url_routing % (self.zipToCoords(self.dlg.lineEdit_1.text()), 
                                                 self.zipToCoords(self.dlg.lineEdit_2.text()),
@@ -231,27 +241,27 @@ class ontheway:
         except KeyError:
             return 'keyerror'
 
-    def requestReach(self, url_distance, url_units):
-        """ Send the Reach requests """
-        ## Get the data
-        tempStarts = self.createRoute()
-        if tempStarts != 'keyerror':
-            datasets = []
-            ## Get reach for each node in the route
-            for item in tempStarts[:10]: ### simplified to first 10 nodes only, creates approx. 30 km per 1 minute
-                response = urllib.urlopen(url_realreach % (item, url_distance, url_units, self.highways, self.toll))
-                data = json.loads(response.read())
-                try:
-                    datasets.append(data['realReach']['gpsPoints'])
-                except KeyError:
-                    return 'keyerror'
-            return datasets
-        else:
-            return 'keyerror'
+    # def requestReach(self, url_distance, url_units):
+    #     """ Send the Reach requests """
+    #     ## Get the data
+    #     tempStarts = self.createRoute()
+    #     if tempStarts != 'keyerror':
+    #         datasets = []
+    #         ## Get reach for each node in the route
+    #         for item in tempStarts[:10]: ### simplified to first 10 nodes only, creates approx. 30 km per 1 minute
+    #             response = urllib.urlopen(url_realreach % (item, url_distance, url_units, self.highways, self.toll))
+    #             data = json.loads(response.read())
+    #             try:
+    #                 datasets.append(data['realReach']['gpsPoints'])
+    #             except KeyError:
+    #                 return 'keyerror'
+    #         return datasets
+    #     else:
+    #         return 'keyerror'
 
     def createRoute(self):
         """ Create shapefile from returned list of points """
-        vl = QgsVectorLayer("linestring?crs=EPSG:4326", 'Route', "memory")
+        vl = QgsVectorLayer("linestring?crs=EPSG:4326", 'Route', "memory") 
         pr = vl.dataProvider()
 
         ## Add feature name in attribute table
@@ -282,78 +292,115 @@ class ontheway:
             vl.updateExtents()
             QgsMapLayerRegistry.instance().addMapLayer(vl)
 
-            return self.tempStarts
+            return vl
         else:
             return 'keyerror'
 
-    def createReach(self):
-        """ Create shapefile from returned list of points """
-        ## Create one layer for multiple polygons and one for single combined polygon that will be displayed
-        vl = QgsVectorLayer("Polygon?crs=EPSG:4326", "tempVectorLayer", "memory")
-        vl_combine = QgsVectorLayer("Polygon?crs=EPSG:4326", "Reach", "memory")
-        pr = vl.dataProvider()
-        pr_combine = vl_combine.dataProvider()
+    def createBuffer(self):
+        """ Create buffer along the route """   
+        ## Get route layer
+        layer = self.createRoute()
 
-        ## Add feature name in attribute table
-        pr.addAttributes([QgsField("tempField", QVariant.String)])
-        vl.updateFields()
-        pr_combine.addAttributes([QgsField("source", QVariant.String), 
-                                QgsField("dest", QVariant.String), 
-                                QgsField("range", QVariant.Int),
-                                QgsField("unit", QVariant.String),
-                                QgsField("highways", QVariant.Int),
-                                QgsField("toll", QVariant.Int)])
-        vl_combine.updateFields()
+        try:
+            route = layer.getFeatures().next()
+            geom = route.geometry()
 
-        ## Create parameters for RealReach URL to be requested
-        distance = self.dlg.spinBox.value()*1000 if self.dlg.radioButton_1.isChecked() else self.dlg.spinBox.value()*60
-        units = 'meter' if self.dlg.radioButton_1.isChecked() else 'sec'
-        self.highways = '1' if self.dlg.checkBox_1.checkState() else '0'
-        self.toll = '1' if self.dlg.checkBox_2.checkState() else '0'
+            ## Prepare meter-based data
+            crsSrc = QgsCoordinateReferenceSystem(4326) ## WGS-84
+            crsDest = QgsCoordinateReferenceSystem(2180) ## meter-based 
+            xform = QgsCoordinateTransform(crsSrc, crsDest)
+            geom.transform(xform)            
 
-        datasets = self.requestReach(distance, units)
+            ## Create buffer geometry
+            buff = geom.buffer(self.dlg.spinBox.value(), 1)     
 
-        if datasets != 'keyerror':
-            for item in datasets:
-                ## Create geometry from points
-                points = []
-                x = [item[i] for i in range(1, len(item), 2)]
-                y = [item[i] for i in range(0, len(item), 2)]
+            ## Transform back
+            xform = QgsCoordinateTransform(crsDest, crsSrc)
+            buff.transform(xform)                        
+            
+            ## Create layer with feature
+            vl = QgsVectorLayer("Polygon?crs=EPSG:4326&field=id:integer&field=start:string&field=end:string", "buffer", "memory")
+            QgsMapLayerRegistry.instance().addMapLayer(vl)
+            vl.startEditing()            
+            bufferFeat = QgsFeature()
+            bufferFeat.setGeometry(buff)
+            bufferFeat.setAttributes([1, self.dlg.lineEdit_1.text(), self.dlg.lineEdit_2.text()])            
+            vl.addFeature(bufferFeat, True)
+            vl.commitChanges()
+            vl.updateExtents()
+            QgsMapLayerRegistry.instance().addMapLayer(vl)
+        
+        except AttributeError: ## Shows up when service doesn't respond
+            return 'keyerror'
+            # self.iface.messageBar().pushMessage("Error", "Service unavailable (503)", level=QgsMessageBar.CRITICAL, duration=3)
+
+    # def createReach(self):
+    #     """ Create shapefile from returned list of points """
+    #     ## Create one layer for multiple polygons and one for single combined polygon that will be displayed
+    #     vl = QgsVectorLayer("Polygon?crs=EPSG:4326", "tempVectorLayer", "memory")
+    #     vl_combine = QgsVectorLayer("Polygon?crs=EPSG:4326", "Reach", "memory")
+    #     pr = vl.dataProvider()
+    #     pr_combine = vl_combine.dataProvider()
+
+    #     ## Add feature name in attribute table
+    #     pr.addAttributes([QgsField("tempField", QVariant.String)])
+    #     vl.updateFields()
+    #     pr_combine.addAttributes([QgsField("source", QVariant.String), 
+    #                             QgsField("dest", QVariant.String), 
+    #                             QgsField("range", QVariant.Int),
+    #                             QgsField("unit", QVariant.String),
+    #                             QgsField("highways", QVariant.Int),
+    #                             QgsField("toll", QVariant.Int)])
+    #     vl_combine.updateFields()
+
+    #     ## Create parameters for RealReach URL to be requested
+    #     distance = self.dlg.spinBox.value()*1000 if self.dlg.radioButton_1.isChecked() else self.dlg.spinBox.value()*60
+    #     units = 'meter' if self.dlg.radioButton_1.isChecked() else 'sec'
+
+
+    #     datasets = self.requestReach(distance, units)
+
+    #     if datasets != 'keyerror':
+    #         for item in datasets:
+    #             ## Create geometry from points
+    #             points = []
+    #             x = [item[i] for i in range(1, len(item), 2)]
+    #             y = [item[i] for i in range(0, len(item), 2)]
                 
-                for i, j in zip(y[4:], x[4:]):
-                    points.append(QgsPoint(i,j))
+    #             for i, j in zip(y[4:], x[4:]):
+    #                 points.append(QgsPoint(i,j))
 
-                fet = QgsFeature()
-                fet.setGeometry(QgsGeometry.fromPolygon([points]))
+    #             fet = QgsFeature()
+    #             fet.setGeometry(QgsGeometry.fromPolygon([points]))
 
-                ## Set feature name/attribute
-                fet.setAttributes(["temp"])
-                pr.addFeatures([fet])
+    #             ## Set feature name/attribute
+    #             fet.setAttributes(["temp"])
+    #             pr.addFeatures([fet])
 
-            ## Create new geometry for single polygon
-            newGeometry = QgsGeometry.fromWkt('GEOMETRYCOLLECTION EMPTY')
+    #         ## Create new geometry for single polygon
+    #         newGeometry = QgsGeometry.fromWkt('GEOMETRYCOLLECTION EMPTY')
 
-            for feature in vl.getFeatures():
-                newGeometry = newGeometry.combine(feature.geometry())
+    #         for feature in vl.getFeatures():
+    #             newGeometry = newGeometry.combine(feature.geometry())
 
-            fet_combine = QgsFeature()
-            fet_combine.setGeometry(QgsGeometry.fromPolygon(newGeometry.asPolygon())) 
+    #         fet_combine = QgsFeature()
+    #         fet_combine.setGeometry(QgsGeometry.fromPolygon(newGeometry.asPolygon())) 
 
-            ## Fill attribute table
-            fet_combine.setAttributes([self.dlg.lineEdit_1.text(),
-                                    self.dlg.lineEdit_2.text(),
-                                    self.dlg.spinBox.value(),
-                                    ('kilometers' if self.dlg.radioButton_1.isChecked() else 'minutes'),
-                                    (1 if self.dlg.checkBox_1.checkState() else 0),
-                                    (1 if self.dlg.checkBox_2.checkState() else 0)])
-            pr_combine.addFeatures([fet_combine])          
+    #         ## Fill attribute table
+    #         fet_combine.setAttributes([self.dlg.lineEdit_1.text(),
+    #                                 self.dlg.lineEdit_2.text(),
+    #                                 self.dlg.spinBox.value(),
+    #                                 ('kilometers' if self.dlg.radioButton_1.isChecked() else 'minutes'),
+    #                                 (1 if self.dlg.checkBox_1.checkState() else 0),
+    #                                 (1 if self.dlg.checkBox_2.checkState() else 0)])
+    #         pr_combine.addFeatures([fet_combine])          
 
-            ## Add prepared layer with transparency
-            vl_combine.updateExtents()
-            QgsMapLayerRegistry.instance().addMapLayer(vl_combine)
-            vl_combine.setLayerTransparency(50)
-        else:
-            return 'keyerror'
+    #         ## Add prepared layer with transparency
+    #         vl_combine.updateExtents()
+    #         QgsMapLayerRegistry.instance().addMapLayer(vl_combine)
+    #         vl_combine.setLayerTransparency(50)
+    #     else:
+    #         return 'keyerror'
 
     def run(self):
         """Run method that performs all the real work"""
@@ -363,6 +410,8 @@ class ontheway:
         result = self.dlg.exec_()
         # See if OK was pressed
         if result:
-            output = self.createReach()
-            if output == 'keyerror':
+            output = self.createBuffer()
+            if output == 'keyerror' and self.error == 404:
                 self.iface.messageBar().pushMessage("Error", "Jeden lub oba kody sa nieprawidlowe", level=QgsMessageBar.WARNING, duration=3)
+            elif output == 'keyerror':
+                self.iface.messageBar().pushMessage("Error", "Service unavailable (503)", level=QgsMessageBar.CRITICAL, duration=3)

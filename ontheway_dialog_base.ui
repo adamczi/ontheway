@@ -137,35 +137,27 @@
       <layout class="QHBoxLayout" name="horizontalLayout_8">
        <item>
         <widget class="QSpinBox" name="spinBox">
+         <property name="minimumSize">
+          <size>
+           <width>80</width>
+           <height>0</height>
+          </size>
+         </property>
          <property name="minimum">
           <number>1</number>
          </property>
          <property name="maximum">
           <number>120</number>
          </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QRadioButton" name="radioButton_1">
-         <property name="text">
-          <string>km</string>
-         </property>
-         <property name="checked">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QRadioButton" name="radioButton_2">
-         <property name="text">
-          <string>minut</string>
+         <property name="value">
+          <number>50</number>
          </property>
         </widget>
        </item>
        <item>
         <widget class="QLabel" name="label">
          <property name="text">
-          <string>od trasy</string>
+          <string>m od trasy</string>
          </property>
         </widget>
        </item>
