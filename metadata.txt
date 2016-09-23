@@ -7,7 +7,7 @@
 # This file should be included when you package your plugin.# Mandatory items:
 
 [general]
-name=onTheWay
+name=Logistics
 qgisMinimumVersion=2.0
 description=Calculate route
 version=0.1

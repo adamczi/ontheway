@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 /***************************************************************************
- ontheway
+ qgis_Logistics
                                  A QGIS plugin
  Calculate route and return surroundings of this route in a given time 
  or distance range.
@@ -87,7 +87,7 @@ class ontheway:
         print self.toolbar
         if self.toolbar is None:
             self.toolbar = self.iface.addToolBar(toolbarName)
-            self.toolbar.setObjectName(u'ontheway')
+            self.toolbar.setObjectName(u'Logistics')
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -102,7 +102,7 @@ class ontheway:
         :rtype: QString
         """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
-        return QCoreApplication.translate('ontheway', message)
+        return QCoreApplication.translate('Logistics', message)
 
 
     def add_action(
@@ -193,7 +193,7 @@ class ontheway:
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
             self.iface.removePluginMenu(
-                self.tr(u'&onTheWay'),
+                self.tr(u'&Logistics'),
                 action)
             self.iface.removeToolBarIcon(action)
         # remove the toolbar
@@ -218,9 +218,11 @@ class ontheway:
             geom = QgsGeometry.fromMultiPolygon(tempPolygons).centroid()     
 
             return str(geom.asPoint().y())+','+str(geom.asPoint().x())
-        except ValueError:    
+        except 404:    
             self.error = 404
             return
+        except:
+            return 'keyerror'
 
     def requestRoute(self):
         """ Send the Route request """
